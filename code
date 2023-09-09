@@ -1,1 +1,904 @@
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+// Defining constant values
+#define EARTH_RADIUS_KM 6371.0
+#define MAX_USERNAME_LENGTH 20
+#define MAX_PASSWORD_LENGTH 20
+#define MAX_LOCATIONS 100
+#define Base_fare_auto 30
+#define Base_fare_mini 50
+#define Base_fare_sed 65
+#define Base_fare_suv 80
+#define Cancel_fee 70
+#define Adv_fee 100
+#define mil_auto 6
+#define mil_mini 10
+#define mil_sed 13
+#define mil_suv 17
+#define Peak_fee 90
+
+// Defining structures
+typedef struct {
+  char username[MAX_USERNAME_LENGTH];
+  char mode[3];
+  int adv;
+  int pek;
+  int can;
+  int pic;
+  int dro;
+  double distance;
+  double travel;
+  int bill;
+  char driver[MAX_USERNAME_LENGTH];
+  char dri_password[MAX_USERNAME_LENGTH];
+  double rate;
+} Customer; // stores customer details
+
+typedef struct {
+  int id;
+  char name[50];
+  double x;
+  double y;
+} Location; // Database storing locations
+
+typedef struct {
+  char username[MAX_USERNAME_LENGTH];
+  char password[3];
+  float rating;
+  char mode[3];
+  int loc;
+  double distance;
+} Driver; // stores driver details
+
+typedef struct {
+  double x;
+  double y;
+} Coordinate; // coordinates of location
+
+Location locations[MAX_LOCATIONS];
+int location_count;
+char admin_username[50] = "Admin";
+int admin_password = 12345;
+
+// Function prototypes
+void customerLogin();
+void customerSignup();
+void driverLogin();
+void driverSignup();
+void updateCustomerPassword();
+void updateDriverPassword();
+void adminPortal(char *filename);
+void adminlogin();
+void locationUpdate(char *filename);
+double degreesToRadians(double degrees);
+double calculateDistance(double lat1, double lon1, double lat2, double lon2);
+void assignNearestDriver(char *filename, Customer *customer,Location *locations, char m[3]);
+void generateBill(Customer *customer);
+void generateAdvBill(Customer *customer);
+void updateDriverLocation(Customer *customer);
+void initializeLocations(char *filename, Location *locations);
+void displayLocations(Location *locations);
+double locationFinder(int dloc, Location *locations, int ploc);
+void sortDrivers(Driver *drivers, int dc);
+
+// Function to initialize the locations available
+void initializeLocations(char *filename, Location *locations) {
+  char line[100];
+  char *token;
+  FILE *file = fopen(filename, "r");
+  location_count = 0;
+  if (file) {
+    while (fgets(line, sizeof(line), file)) {
+      Location location;
+      char *token = strtok(line, ",");
+      location.id = atoi(token);
+      token = strtok(NULL, ",");
+      strcpy(location.name, token);
+      token = strtok(NULL, ",");
+      location.x = atof(token);
+      token = strtok(NULL, ",");
+      location.y = atof(token);
+      locations[location_count] = location; // Creating locations database
+      location_count++;
+    }
+    fclose(file);
+  } else {
+    printf("Failed to open the file: %s\n", filename);
+  }
+
+  return;
+}
+
+// main function
+int main() {
+  int choice;
+  do {
+    printf("\U0001F64F \U0001F64F Welcome to GoCabs! \U0001F64F \U0001F64F\n");
+    printf("\U0001F929 \U0001F929 Enjoy your amazing Journey \U0001F929 "
+           "\U0001F929\n\n");
+    printf("Select Interface:\n"); // Choosing interface
+    printf("1. Customer\n");
+    printf("2. Driver\n");
+    printf("3. Admin\n");
+    printf("4. Direct to Interface again\n");
+    printf("5. Exit from cab system\n");
+    printf("Enter your choice: ");
+    scanf("%d", &choice);
+    if (choice == 5) {
+      printf("Thankyou!\n");
+      printf("Visit us again!\n");
+      exit(0);
+    } else {
+      switch (choice) {
+      case 1:
+        customerLogin(); // Customer interface
+        break;
+      case 2:
+        driverLogin(); // Driver interface
+        break;
+      case 3:
+        adminlogin(); // Admin interface
+        break;
+      case 4:
+        printf("Directing to the main page \U0001F695...!\n\n");
+        main();
+        break;
+      default:
+        printf("Invalid choice. Try again.\n");
+      }
+    }
+  } while (choice != 5);
+  return 0;
+}
+
+void sortDrivers(Driver *drivers, int dc) {
+  int i, j;
+  // Sorting least distant drivers
+  for (i = 0; i < dc - 1; i++) {
+    for (j = 0; j < dc - i - 1; j++) {
+      if (drivers[j].distance > drivers[j + 1].distance ||
+          (drivers[j].distance == drivers[j + 1].distance &&
+           drivers[j].rating < drivers[j + 1].rating)) {
+        // Swap drivers
+        Driver temp = drivers[j];
+        drivers[j] = drivers[j + 1];
+        drivers[j + 1] = temp;
+      }
+    }
+  }
+  return;
+}
+
+double degreesToRadians(double degrees) { return degrees * M_PI / 180.0; }
+
+double calculateDistance(double lat1, double lon1, double lat2, double lon2) {
+  double dLat =
+      degreesToRadians(lat2 - lat1); // Haversine formula to calculate distance
+  double dLon = degreesToRadians(lon2 - lon1);
+
+  double a = sin(dLat / 2) * sin(dLat / 2) + cos(degreesToRadians(lat1)) *
+                                                 cos(degreesToRadians(lat2)) *
+                                                 sin(dLon / 2) * sin(dLon / 2);
+
+  double c = 2 * atan2(sqrt(a), sqrt(1 - a));
+
+  double distance = EARTH_RADIUS_KM * c;
+  return distance;
+}
+
+double locationFinder(int dloc, Location *locations, int ploc) {
+  Coordinate driver;
+  Coordinate customer; // Finds the coordinates of locations ID's of driver and
+                       // customer to find distance
+  for (int i = 0; i < location_count; i++) {
+    if (dloc == locations[i].id) {
+      driver.x = locations[i].x;
+      driver.y = locations[i].y;
+    }
+    if (ploc == locations[i].id) {
+      customer.x = locations[i].x;
+      customer.y = locations[i].y;
+    }
+  }
+  double d = calculateDistance(driver.x, driver.y, customer.x, customer.y);
+  return d;
+}
+
+void assignNearestDriver(char *filename, Customer *customer,
+                         Location *locations, char m[3]) {
+  printf("Pickup location: ");
+  scanf("%d", &(customer->pic));
+  printf("Drop location: ");
+  scanf("%d", &(customer->dro));
+  int cploc = customer->pic;
+  int cdloc = customer->dro;
+  printf("\n");
+  char line[100];
+  char *token;
+  FILE *file = fopen(filename, "r");
+  Driver *drivers = NULL;
+  int driver_count = 0;
+
+  if (file) {
+    while (fgets(line, sizeof(line), file)) {
+      Driver driver;
+      char *token = strtok(line, ",");
+      strcpy(driver.username, token);
+      token = strtok(NULL, ",");
+      strncpy(driver.password, token, 3);
+      token = strtok(NULL, ",");
+      driver.rating = atof(token);
+      token = strtok(NULL, ",");
+      strcpy(driver.mode, token);
+      token = strtok(NULL, "\n");
+      driver.loc = atoi(token);
+      if (strcmp(driver.mode, m) == 0) {
+        drivers =
+            (Driver *)realloc(drivers, (driver_count + 1) * sizeof(Driver));
+        drivers[driver_count] = driver; // Creating driver database of the mode
+                                        // chosen by customer dynamically
+        driver_count++;
+      }
+    }
+    fclose(file);
+  } else {
+    printf("Failed to open the file: %s\n", filename);
+  }
+  for (int i = 0; i < driver_count; i++) {
+    drivers[i].distance = locationFinder(
+        drivers[i].loc, locations,
+        cploc); // Calculating distance for every driver to the customer
+  }
+  sortDrivers(drivers, driver_count);
+  for (int i = 0; i < driver_count; i++) {
+    printf("%s, %s, %f, %lf\n",drivers[i].username,drivers[i].mode,drivers[i].rating,drivers[i].distance);
+  }
+  strcpy(customer->driver, drivers[0].username);
+  strcpy(customer->dri_password, drivers[0].password);
+  customer->travel = locationFinder(drivers[0].loc, locations, cdloc);
+  free(drivers); // Clearing the dynamic driver database
+  return;
+}
+
+void displayLocations(Location *locations) {
+  printf("Location Details:\n\n");
+  printf("Location ID    Location\n"); // Displaying locations available for cab
+                                       // service
+  for (int i = 0; i < location_count; i++) {
+    printf("%d             %s\n", locations[i].id, locations[i].name);
+  }
+  printf("\n");
+  return;
+}
+
+void adminlogin() {
+  printf("Enter your login details\n");
+  printf("Enter Username:");
+  char admin[50];
+  scanf("%s", admin);
+  printf("Enter password:");
+  int password;
+  scanf("%d", &password);
+  if ((strcmp(admin, admin_username) == 0) && (password == admin_password)) 
+  {
+    printf("Do you want to check the history or expand your service "
+           "locations:\n1. History check\n2. Add a service location\n");
+    int option;
+    scanf("%d",&option);
+    if (option == 1) {
+      adminPortal("history.csv");
+    }
+    if (option == 2) {
+      locationUpdate("locations.csv");
+    }
+    main();
+  }
+  if (strcmp(admin, admin_username) == 0 && (password != admin_password)) {
+    printf("Forgot password\n");
+    printf("Update password\n");
+    printf("Enter new password: ");
+    scanf("%d", &admin_password);
+    printf("Password updated. Login again\n");
+    adminlogin();
+  }
+  return;
+}
+
+void customerLogin() {
+  char username[MAX_USERNAME_LENGTH];
+  char password[MAX_PASSWORD_LENGTH];
+  char line[100];
+  char *token;
+  int found = 0;
+  FILE *file = fopen("customers.csv", "r");
+  Customer customer;
+  printf("Customer Login\n");
+  printf("Username: ");
+  scanf("%s", username);
+  printf("Password: ");
+  scanf("%s", password);
+
+  if (file) {
+    while (fgets(line, sizeof(line), file)) {
+      token = strtok(line, ",");
+      if (strcmp(token, username) == 0) {
+        token = strtok(NULL, ",");
+        if (strncmp(token, password, 3) == 0) // Login check of the customer
+        {
+          printf("Login successful!\n");
+          found = 1;
+          FILE *file1 =
+              fopen("history.csv",
+                    "a"); // CSV file to store the history of the application
+          strcpy(customer.username, username); // Input customer details
+          fprintf(file1, "%s, ", customer.username);
+          printf("Choose mode of travel\n aut - Auto \U0001F69C \n min - "
+                 "Mini \U0001F697 \n sed - Sedan \U0001F699 \n suv - SUV "
+                 "\U0001F68C  ");
+          scanf("%3s", customer.mode);
+          fprintf(file1, "%3s, ", customer.mode);
+          printf("Booking in advance?(1 for yes, 0 for no): ");
+          scanf("%d", &customer.adv);
+          fprintf(file1, "Advance Booking: %d, ", customer.adv);
+          time_t current_Time;
+          time(&current_Time);
+          char* formattedTime = ctime(&current_Time);
+          time_t currentTime;
+          time(&currentTime);
+          struct tm* localTime = localtime(&currentTime);
+          char hourString[3];
+          strftime(hourString, sizeof(hourString), "%H", localTime);
+          int current_time=atoi(hourString);
+          if((current_time>=19 && current_time<=21)||(current_time>=8 && current_time<=11))
+          {
+            customer.pek=1;
+          }
+          else
+          {
+            customer.pek=0;
+          }
+          fprintf(file1, "Time: %s, ", formattedTime);
+          fprintf(file1, "Peak Time travel : %d, ", customer.pek);
+          printf("Choose your pickup location and drop location:");
+          initializeLocations("locations.csv", locations);
+          displayLocations(locations);
+          printf("\n");
+
+          assignNearestDriver("drivers.csv", &customer, locations,
+                              customer.mode); // Sending customer details to get
+                                              // appropriate driver assigned
+          fprintf(file1, "Pickup location: %d, Drop location: %d, ",
+                  customer.pic, customer.dro);
+          printf("Driver assigned: %s\n", customer.driver);
+          fprintf(file1, "Driver assigned: %s, ", customer.driver);
+          if (customer.adv == 1) // Advance book module
+          {
+            generateAdvBill(&customer);
+            printf("Bill amount: %d\n **(Bill is inclusive of all taxes)\n",
+                   customer.bill);
+            fprintf(file1, "Bill amount: Rs. %d ",
+                    customer.bill); // Displaying bill
+            printf("Ride Booked!\n");
+            fclose(file1);
+            main();
+          }
+          if (customer.adv == 0) {
+            int time_1 = (0.5 * (customer.distance));
+            printf("Cab reaches you in %d minutes\n", time_1);
+            printf("Confirm Ride!(1 for Yes, 0 for No): "); // Any Cancellation
+                                                            // of ride
+            scanf("%d", &customer.can);
+            if (customer.can == 0) {
+              generateBill(&customer);
+              printf("Bill amount: %d\n **(Bill is inclusive of all taxes)\n",
+                     customer.bill); // Displaying bill
+              fprintf(file1, "Bill amount: Rs. %d ", customer.bill);
+              fprintf(file1, "Ride cancelled, ");
+              fclose(file1);
+              printf("Sorry for any inconvenience caused..\n");
+              printf("Sad that you are leaving us!\n");
+              printf("Amount Deducted!");
+              main();
+            }
+            if (customer.can == 1) {
+              generateBill(&customer);
+              printf("Bill amount: %d\n **(Bill is inclusive of all taxes)\n",
+                     customer.bill); // Displaying bill
+              char pass[3];
+              printf("***Driver Interface***\n");
+              printf("Confirm ride..\n");
+              scanf("%s", pass);
+              if (strcmp(pass, customer.dri_password) ==
+                  0) // Asking driver to confirm ride
+              {
+                printf("***User Interface***\n");
+                printf("Ride Confirmed!!\n");
+                while (1) {
+                  char pay_confo[3];
+                  printf(
+                      "Enter pin:\n"); // Entering pin for secure bill payments
+                  printf("*****Never share your pin to anyone*****\n");
+                  scanf("%s", pay_confo);
+                  if (strcmp(pay_confo, password) == 0) {
+                    printf("Payment Done\n");
+                    fprintf(file1, "Bill amount: %d\n", customer.bill);
+                    int time_2 = (0.5 * (customer.travel));
+                    printf("You will reach the destination in %d minutes\n",
+                           time_2);
+                    printf("Enjoy the ride..\n");
+                    int feed;
+                    printf("Would you like to leave us a feedback:\n1 for "
+                           "yes,I would like to\n0 for no,remind me later\n");
+                    scanf("%d", &feed);
+                    if (feed == 1) {
+                      printf("Rate driver(out of 5): ");
+                      scanf("%lf",&customer.rate);
+                      updateDriverLocation(&customer);
+                      char feedback[100]; // Feedback system
+                      fgets(feedback, sizeof(feedback), stdin);
+                      fprintf(file1, "%s\n", feedback);
+                      fclose(file1);
+                    } else {
+                      updateDriverLocation(&customer);
+                      fclose(file1);
+                      printf("Thankyou \U0001F64F\n");
+                      main();
+                    }
+                    break;
+                  } else {
+                    printf("Wrong pin!!\n"); // Redirect customer to re-enter
+                                             // pin as invalid pin is entered
+                    printf("Payment incomplete!!\n");
+                  }
+                }
+                main();
+              }
+            }
+          }
+          break;
+        } else {
+          updateCustomerPassword(); // Customer password update
+          found = 1;
+        }
+      }
+    }
+
+    fclose(file);
+  } else {
+    printf("Error opening file.\n");
+  }
+
+  if (!found) {
+    printf(
+        "Invalid username or password. Please sign up.\n"); // Customer with
+                                                            // entered details
+                                                            // doesnot exsist
+    customerSignup();
+  }
+}
+
+void adminPortal(char *filename) 
+{
+  FILE *file = fopen(filename, "r");
+  char ch;
+  if (file == NULL) {
+    printf("Error opening the file.\n");
+    return;
+  }
+  while ((ch = fgetc(file)) != EOF) {
+    printf("%c", ch);
+  }
+  printf("\n");
+  fclose(file);
+  return;
+}
+
+void locationUpdate(char *filename)
+{
+  FILE *file = fopen(filename, "a");
+  if (file == NULL) 
+  {
+        printf("Error opening the file.\n");
+        return;
+    }
+   Location newLocation;
+   printf("Enter new location ID: ");
+   scanf("%d",&newLocation.id);
+   printf("Enter new location name: ");
+   scanf("%s",newLocation.name);
+   printf("Enter new location coordinates(x,y): ");
+   scanf("%lf,%lf",&newLocation.x,&newLocation.y);
+   fprintf(file, "%d,%s,%.4lf,%.4lf\n",newLocation.id,newLocation.name,newLocation.x,newLocation.y);
+   fclose(file);
+   return;
+}
+
+void customerSignup() {
+  char username[MAX_USERNAME_LENGTH];
+  char password[MAX_PASSWORD_LENGTH];
+  char line[100];
+  char l[100];
+  char *token;
+  int found = 0;
+  FILE *file = fopen("customers.csv", "r");
+  FILE *tempFile = fopen("temp.csv", "w");
+
+  printf("Customer Signup\n");
+  printf("Username: ");
+  scanf("%s", username);
+
+  if (file) {
+    while (fgets(line, sizeof(line), file)) {
+      strcpy(l, line);
+      token = strtok(line, ",");
+      if (strcmp(token, username) == 0) {
+        printf("Username already exists. Please choose a different "
+               "username.\n"); // Checking if username of customer already
+                               // exsist
+        fclose(file);
+        fclose(tempFile);
+        remove("temp.csv");
+        customerSignup();
+        return;
+      }
+      fprintf(tempFile, "%s", l);
+    }
+
+    printf("Password: ");
+    scanf("%s", password);
+
+    fprintf(tempFile, "%s,%s\n", username,
+            password); // Writing customer details into file
+
+    fclose(file);
+    fclose(tempFile);
+
+    remove("customers.csv");
+    rename("temp.csv", "customers.csv");
+
+    printf("Signup successful!\n");
+  } else {
+    printf("Error opening file.\n");
+  }
+}
+
+void driverLogin() {
+  char username[MAX_USERNAME_LENGTH];
+  char password[MAX_PASSWORD_LENGTH];
+  char line[100];
+  char *token;
+  int found = 0;
+  FILE *file = fopen("drivers.csv", "r");
+
+  printf("Driver Login\n");
+  printf("Username: ");
+  scanf("%s", username);
+  printf("Password: ");
+  scanf("%s", password);
+
+  if (file) {
+    while (fgets(line, sizeof(line), file)) {
+      token = strtok(line, ",");
+      if (strcmp(token, username) == 0) {
+        token = strtok(NULL, ",");
+        if (strncmp(token, password, 3) == 0) {
+          printf("Login successful!\n"); // Driver logged in
+          found = 1;
+          break;
+        }
+        if (strcmp(token, password) != 0) {
+          printf("Forgot Password!\n");
+          updateDriverPassword(); // Updating driver password
+          found = 1;
+        }
+      }
+    }
+
+    fclose(file);
+  } else {
+    printf("Error opening file.\n");
+  }
+
+  if (!found) {
+    printf("Invalid username or password. Please sign up.\n");
+    driverSignup();
+  }
+}
+
+void driverSignup() {
+  char username[MAX_USERNAME_LENGTH];
+  char password[MAX_PASSWORD_LENGTH];
+  double rating;
+  char mode[3];
+  int loc;
+  char line[100];
+  char l[100];
+  char *token;
+  int found = 0;
+  FILE *file = fopen("drivers.csv", "r");
+  FILE *tempFile = fopen("temp.csv", "w");
+
+  printf("Driver Signup\n");
+  printf("Username: ");
+  scanf("%s", username);
+
+  if (file) {
+    while (fgets(line, sizeof(line), file)) {
+      strcpy(l, line);
+      token = strtok(line, ",");
+      if (strcmp(token, username) == 0) {
+        printf(
+            "Username already exists. Please choose a different username.\n");
+        printf("\n");
+        fclose(file);
+        fclose(tempFile);
+        remove("temp.csv");
+        driverSignup();
+        return;
+      }
+      fprintf(tempFile, "%s", l);
+    }
+
+    printf("Password: ");
+    scanf("%s", password);
+    printf("***Admin Interface***\n");
+    printf("%s is trying to register\n",username);
+    printf("Enter Driver Rating as per driving test: ");
+    scanf("%lf", &rating);
+    printf("***Driver Interface***\n");
+    printf("Vehicle mode: ");
+    scanf("%s", mode);
+    printf("Location (Enter according to the below reference) : \n");
+    initializeLocations("locations.csv", locations);
+    displayLocations(locations);
+    scanf("%d", &loc);
+    fprintf(tempFile, "%s,%s,%.2f,%3s,%d,%d\n", username, password, rating, mode,
+            loc,0); // Entering new driver details
+
+    fclose(file);
+    fclose(tempFile);
+
+    remove("drivers.csv");
+    rename("temp.csv", "drivers.csv");
+
+    printf("Signup successful!\n");
+  } else {
+    printf("Error opening file.\n");
+  }
+}
+
+void updateCustomerPassword() {
+  char username[MAX_USERNAME_LENGTH];
+  char newPassword[MAX_PASSWORD_LENGTH];
+  char line[100];
+  char *token;
+  int found = 0;
+  FILE *file = fopen("customers.csv", "r");
+  FILE *tempFile = fopen("temp.csv", "w");
+
+  printf("Update Customer Password\n");
+  printf("Username: ");
+  scanf("%s", username);
+
+  if (file) {
+    while (fgets(line, sizeof(line), file)) {
+      line[strcspn(line, "\n")] = '\0';
+      int i = strlen(line);
+      char l[i];
+      strcpy(l, line);
+      token = strtok(line, ",");
+      if (strcmp(token, username) == 0) {
+        printf("New Password: ");
+        scanf("%s", newPassword);
+        fprintf(tempFile, "%s,%s\n", username,
+                newPassword); // Updating customer with new password
+        found = 1;
+      } else {
+        fprintf(tempFile, "%s\n", l);
+      }
+    }
+
+    fclose(file);
+    fclose(tempFile);
+
+    remove("customers.csv");
+    rename("temp.csv", "customers.csv");
+
+    if (found) {
+      printf("Password updated successfully!\n");
+    } else {
+      printf("Customer not found.\n");
+    }
+  } else {
+    printf("Error opening file.\n");
+  }
+}
+
+void updateDriverPassword() {
+  char username[MAX_USERNAME_LENGTH];
+  char newPassword[MAX_PASSWORD_LENGTH];
+  char line[100];
+  char *token;
+  int found = 0;
+  FILE *file = fopen("drivers.csv", "r");
+  FILE *tempFile = fopen("temp.csv", "w");
+
+  printf("Update Driver Password\n");
+  printf("Username: ");
+  scanf("%s", username);
+
+  if (file) {
+    while (fgets(line, sizeof(line), file)) {
+      line[strcspn(line, "\n")] = '\0';
+      int i = strlen(line);
+      char l[i];
+      strcpy(l, line);
+      token = strtok(line, ",");
+      if (strcmp(token, username) == 0) {
+        printf("New Password: ");
+        scanf("%s", newPassword); // Updating driver detail with new password
+        token = strtok(NULL, ",");
+        token = strtok(NULL, "\n");
+        fprintf(tempFile, "%s,%s,%s\n", username, newPassword, token);
+        found = 1;
+      } else {
+        fprintf(tempFile, "%s\n", l);
+      }
+    }
+
+    fclose(file);
+    fclose(tempFile);
+
+    remove("drivers.csv");
+    rename("temp.csv", "drivers.csv");
+
+    if (found) {
+      printf("Password updated successfully!\n");
+    } else {
+      printf("Driver not found.\n");
+    }
+  } else {
+    printf("Error opening file.\n");
+  }
+  return;
+}
+
+void generateBill(Customer *customer) {
+  int sum = 0;
+  int can_fee = 0;
+  int peak_fee = 0;
+  int aut_fee = 0;
+  int min_fee = 0;
+  int sed_fee = 0;
+  int suv_fee = 0;
+  can_fee =
+      can_fee + ((customer->can == 0)
+                     ? Cancel_fee
+                     : 0); // Adding cancellation fee  if booking is cancelled
+  peak_fee = peak_fee +
+             ((customer->adv == 1)
+                  ? Peak_fee
+                  : 0); // Adding surge fee if customer travelling in peak time
+  // Adding fare for respective cab mode
+  aut_fee =
+      aut_fee + ((strcmp(customer->mode, "aut") == 0)
+                     ? Base_fare_auto +
+                           ((customer->travel + customer->distance) * mil_auto)
+                     : 0);
+  min_fee =
+      min_fee + ((strcmp(customer->mode, "min") == 0)
+                     ? Base_fare_mini +
+                           ((customer->travel + customer->distance) * mil_mini)
+                     : 0);
+  sed_fee =
+      sed_fee +
+      ((strcmp(customer->mode, "sed") == 0)
+           ? Base_fare_sed + ((customer->travel + customer->distance) * mil_sed)
+           : 0);
+  suv_fee =
+      suv_fee +
+      ((strcmp(customer->mode, "suv") == 0)
+           ? Base_fare_suv + ((customer->travel + customer->distance) * mil_suv)
+           : 0);
+  sum = can_fee + peak_fee + aut_fee + min_fee + sed_fee +
+        suv_fee; // Generating total bill
+  customer->bill = sum;
+  return;
+}
+
+void generateAdvBill(Customer *customer) {
+  int sum = 0;
+  int adv_fee = 0;
+  int peak_fee = 0;
+  int aut_fee = 0;
+  int min_fee = 0;
+  int sed_fee = 0;
+  int suv_fee = 0;
+  adv_fee =
+      adv_fee + ((customer->adv == 1)
+                     ? Adv_fee
+                     : 0); // Adding advance fee to bill if advance booking
+  peak_fee = peak_fee +
+             ((customer->adv == 1)
+                  ? Peak_fee
+                  : 0); // Adding surge fee if customer travelling in peak time
+  // Adding fare for respective cab mode
+  aut_fee =
+      aut_fee + ((strcmp(customer->mode, "aut") == 0) ? Base_fare_auto : 0);
+  min_fee =
+      min_fee + ((strcmp(customer->mode, "min") == 0) ? Base_fare_mini : 0);
+  sed_fee =
+      sed_fee + ((strcmp(customer->mode, "sed") == 0) ? Base_fare_sed : 0);
+  suv_fee =
+      suv_fee + ((strcmp(customer->mode, "suv") == 0) ? Base_fare_suv : 0);
+  sum = adv_fee + peak_fee + aut_fee + min_fee + sed_fee +
+        suv_fee; // Generating total bill
+  customer->bill = sum;
+  return;
+}
+
+void updateDriverLocation(Customer *customer) {
+  char username[MAX_USERNAME_LENGTH];
+  char password[MAX_PASSWORD_LENGTH];
+  char rating[10];
+  char mode[10];
+  char line[100];
+  char *token;
+  int found = 0;
+  FILE *file = fopen("drivers.csv", "r");
+  FILE *tempFile = fopen("temp.csv", "w");
+  float newrate;
+  if (file) {
+    while (fgets(line, sizeof(line), file)) {
+      line[strcspn(line, "\n")] = '\0';
+      int i = strlen(line);
+      char l[i];
+      strcpy(l, line);
+      token = strtok(line, ",");
+      strcpy(username, token);
+      if (strcmp(username, customer->driver) == 0) {
+        token = strtok(NULL, ",");
+        strncpy(password, token, 3);
+        int pass=atoi(password);
+        token = strtok(NULL, ",");
+        strcpy(rating, token);
+        newrate=atof(token);
+        token = strtok(NULL, ",");
+        strncpy(mode, token, 3);
+        token = strtok(NULL, ",");
+        token = strtok(NULL, "\n");
+        int n=atoi(token);
+        newrate=(newrate*n+customer->rate)/(n+1);
+        if(newrate>5)
+        {
+          newrate=5;
+        }
+        fprintf(tempFile, "%s,%d,%.2lf,%3s,%d,%d\n", username, pass, newrate,
+                mode,customer->dro,++n); // Updating driver location to customer drop
+                                // location after the ride in the file
+        found = 1;
+      } else {
+        fprintf(tempFile, "%s\n", l);
+      }
+    }
+
+    fclose(file);
+    fclose(tempFile);
+
+    remove("drivers.csv");
+    rename("temp.csv", "drivers.csv");
+
+    if (found) {
+      printf("Driver location updated successfully!\n");
+    } else {
+      printf("Driver not found.\n");
+    }
+  } else {
+    printf("Error opening file.\n");
+  }
+}
 
